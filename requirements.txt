@@ -1,7 +1,10 @@
 streamlit
-langchain
+pillow
 python-dotenv
-huggingface-hub
-Pillow
 requests
-langchain-huggingface 
+langchain-huggingface
+diffusers
+torch
+accelerate
+safetensors
+transformers 

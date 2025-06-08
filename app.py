@@ -6,6 +6,8 @@ import requests
 from langchain_huggingface import HuggingFacePipeline
 from langchain.prompts import PromptTemplate
 import time
+import torch
+from diffusers import DiffusionPipeline
 
 load_dotenv()
 
@@ -37,23 +39,41 @@ def image_to_text(image):
     return results[0]['generated_text']
 
 @st.cache_resource
-def get_text_to_image_pipeline():
+def get_text_to_image_pipeline(lora_model_id=None):
     """
-    Returns a cached text-to-image pipeline.
+    Returns a cached text-to-image pipeline with LoRA support.
     """
-    pipe = HuggingFacePipeline.from_model_id(
-        model_id="stabilityai/stable-diffusion-2",
-        task="text-to-image",
+    model_id = "runwayml/stable-diffusion-v1-5"
+    
+    # Determine the torch dtype based on device availability
+    if torch.cuda.is_available() or torch.backends.mps.is_available():
+        dtype = torch.float16
+    else:
+        dtype = torch.float32
+
+    pipe = DiffusionPipeline.from_pretrained(
+        model_id,
+        torch_dtype=dtype,
+        use_safetensors=True
     )
+
+    if torch.cuda.is_available():
+        pipe = pipe.to("cuda")
+    elif torch.backends.mps.is_available():
+        pipe = pipe.to("mps")
+
+    if lora_model_id:
+        pipe.load_lora_weights(lora_model_id)
+
     return pipe
 
-def generate_image(prompt):
+def generate_image(prompt, lora_model_id=None):
     """
-    Generates an image from a prompt using a Hugging Face model.
+    Generates an image from a prompt using a Hugging Face model with LoRA.
     """
-    pipe = get_text_to_image_pipeline()
-    # The output of the pipeline is a list with a PIL Image
-    return pipe.run(prompt)[0]
+    pipe = get_text_to_image_pipeline(lora_model_id)
+    image = pipe(prompt, num_inference_steps=30).images[0]
+    return image
 
 st.title("Image Generation with LangChain and Hugging Face")
 
@@ -63,6 +83,16 @@ uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Image.", use_column_width=True)
+
+# LoRA model selection
+lora_options = {
+    "None": None,
+    "Fine-tuned SD 1.5 (General)": "sayakpaul/sd-model-finetuned-lora-t4",
+    "Pixel Art": "pdev/pixel-art-lora-v1",
+    "LCM LoRA (Fast Inference)": "latent-consistency/lcm-lora-sdv1-5",
+}
+selected_lora_name = st.selectbox("Choose a LoRA style:", list(lora_options.keys()))
+selected_lora_id = lora_options[selected_lora_name]
 
 prompt = st.text_input("Enter a prompt for the new image")
 
@@ -82,7 +112,7 @@ if st.button("Generate Image"):
             st.write("Final Prompt:", final_prompt)
             
             # Generate the new image
-            generated_image = generate_image(final_prompt)
+            generated_image = generate_image(final_prompt, selected_lora_id)
             
             if generated_image:
                 st.image(generated_image, caption="Generated Image.", use_column_width=True)
